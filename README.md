@@ -28,6 +28,7 @@ opkg install git
 opkg install git-http
 
 # 克隆项目
+rm -rf MiAir # 如果是更新，需要清理旧的部署目录
 git clone https://github.com/KiriChen-Wind/MiAir.git
 cd MiAir
 
