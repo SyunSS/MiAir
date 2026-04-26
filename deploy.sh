@@ -206,24 +206,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     dnsutils \
     && rm -rf /var/lib/apt/lists/*
 
-# 架构特定的依赖安装
-RUN case "$(uname -m)" in \
-    arm*|aarch64) \
-        # ARM 架构特定依赖（如果需要） \
-        apt-get update && apt-get install -y --no-install-recommends \
-        && rm -rf /var/lib/apt/lists/* \
-        ;;
-    x86_64|amd64) \
-        # x86 架构特定依赖（如果需要） \
-        apt-get update && apt-get install -y --no-install-recommends \
-        && rm -rf /var/lib/apt/lists/* \
-        ;;
-    *) \
-        # 其他架构 \
-        echo "Unknown architecture, using default dependencies" \
-        ;;
-    esac
-
 WORKDIR /app
 
 # 安装 Python 依赖
