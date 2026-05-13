@@ -1,6 +1,6 @@
 """MiAir 常量定义"""
 
-VERSION = "0.5.3-alpha"
+VERSION = "0.5.4-alpha"
 
 
 # SSDP 相关
@@ -51,7 +51,7 @@ NEED_USE_PLAY_MUSIC_API = [
 ]
 
 # 默认 audio_id (用于 play_by_music_url)
-DEFAULT_AUDIO_ID = " "
+DEFAULT_AUDIO_ID = "448161862632079419"
 
 # 支持的协议信息 (ConnectionManager GetProtocolInfo) - 仅音频
 SUPPORTED_PROTOCOLS = (
