@@ -3,7 +3,7 @@ name: Auto Sync Fork
 on:
   schedule:
     # 每 21 分钟自动同步一次（你想频繁点可以改成 21 分钟，稳一点可以改成每小时）
-      - cron: '0 1,13 * * *'
+      - cron: '0 */6 * * *'
   workflow_dispatch:
     inputs:
       sync_test_mode:
@@ -40,6 +40,15 @@ jobs:
         run: |
           if [ "${{ steps.sync.outputs.has_new_commits }}" = "true" ]; then
             echo "✅ 检测到上游有新提交，已自动合并到你的 fork"
+            echo "trigger_build=true" >> $GITHUB_ENV
           else
             echo "ℹ️  上游暂无新提交，你的 fork 已是最新"
+            echo "trigger_build=false" >> $GITHUB_ENV
           fi
+
+      - name: Trigger docker build
+        if: env.trigger_build == 'true'
+        run: |
+          echo "🚀 有新提交，触发自动编译..."
+          gh workflow run "Build and Push MiAir Docker Image" --ref main
+          echo "✅ 已触发编译工作流"
