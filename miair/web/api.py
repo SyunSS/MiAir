@@ -20,6 +20,131 @@ from miair.const import VERSION
 log = logging.getLogger("miair")
 
 
+# passToken 在返回给前端时使用的完整脱敏占位符（不是真实凭据）
+MASKED_TOKEN = "********"
+
+
+def _mask_value(key: str, value: str) -> str:
+    """按字段生成脱敏后的展示值。
+
+    - passToken: 完整敏感凭据，全部替换为占位符；
+    - userId: 仅为账号标识，保留最后 3 位明文，其余用 * 覆盖（如 *****238），
+      便于用户确认当前账号又不暴露完整 ID。
+    其它字段保持原样。
+    """
+    if not value:
+        return value
+    if key == "passToken":
+        return MASKED_TOKEN
+    if key == "userId":
+        if len(value) <= 3:
+            return MASKED_TOKEN
+        return MASKED_TOKEN + value[-3:]
+    return value
+
+
+def _mask_cookie(cookie: str) -> str:
+    """对通过 /api/setting 返回给前端的 cookie 进行脱敏，隐藏 passToken 与 userId 的敏感部分。"""
+    if not cookie:
+        return cookie
+    parts = []
+    for item in cookie.split(";"):
+        stripped = item.strip()
+        if not stripped:
+            continue
+        if "=" in stripped:
+            key, value = stripped.split("=", 1)
+            key = key.strip()
+            parts.append(f"{key}={_mask_value(key, value.strip())}")
+            continue
+        parts.append(stripped)
+    return "; ".join(parts)
+
+
+def _unmask_cookie(new_cookie: str, current_cookie: str) -> str:
+    """将前端回写的 cookie 还原为真实值。
+
+    脱敏值中一定含有 `*`（passToken/userId 的真实值不含 `*`）。若某字段回写值仍带
+    `*`（用户未修改），则用当前已存储的真实值替换，避免脱敏值被写坏凭据；用户填入
+    的新值不含 `*`，按原样保存。
+    """
+    if not new_cookie or MASKED_TOKEN not in new_cookie:
+        return new_cookie
+
+    # 解析当前存储的真实值
+    current = {}
+    for item in (current_cookie or "").split(";"):
+        item = item.strip()
+        if "=" in item:
+            k, v = item.split("=", 1)
+            current[k.strip()] = v.strip()
+
+    parts = []
+    for item in new_cookie.split(";"):
+        stripped = item.strip()
+        if not stripped:
+            continue
+        if "=" in stripped:
+            key, value = stripped.split("=", 1)
+            key = key.strip()
+            value = value.strip()
+            if MASKED_TOKEN in value and current.get(key):
+                parts.append(f"{key}={current[key]}")
+                continue
+            parts.append(f"{key}={value}")
+            continue
+        parts.append(stripped)
+    return "; ".join(parts)
+
+
+def _mask_devices(device_list, required_fields=['miotDID','hardware','name']):
+    """按白名单裁剪设备信息，仅保留 required_fields 指定的字段。
+
+    Args:
+        device_list: 单个设备 dict，或设备 dict 组成的列表。
+        required_fields: 需要保留的字段名列表，支持用点号表示嵌套路径
+            （如 "capabilities.multiroom_music"）。
+
+    Returns:
+        仅含指定字段、并保持原嵌套结构的设备。设备中不存在的字段会被跳过。
+        输入为列表时返回列表，输入为单个 dict 时返回单个 dict。
+    """
+    single = not isinstance(device_list, list)
+    devices = [device_list] if single else device_list
+
+    _MISSING = object()
+    result = []
+    for device in devices:
+        masked = {}
+        for field in required_fields:
+            keys = field.split(".")
+
+            # 沿路径逐级取值，任一级缺失或非 dict 则跳过该字段
+            value = device
+            for k in keys:
+                if isinstance(value, dict) and k in value:
+                    value = value[k]
+                else:
+                    value = _MISSING
+                    break
+            if value is _MISSING:
+                continue
+
+            # 沿路径逐级写入，重建嵌套结构
+            target = masked
+            for k in keys[:-1]:
+                nested = target.get(k)
+                if not isinstance(nested, dict):
+                    nested = {}
+                    target[k] = nested
+                target = nested
+            target[keys[-1]] = value
+
+        result.append(masked)
+
+    return result[0] if single else result
+
+
 def _is_docker():
     """检测是否在 Docker 容器中运行"""
     # 1. 环境变量显式指定（最可靠）
@@ -96,7 +221,7 @@ def create_web_app(config: Config, app_instance) -> web.Application:
             "auto_play_on_set_uri": config.auto_play_on_set_uri,
             "mi_did": config.mi_did,
             "has_account": bool(config.account or config.cookie),
-            "cookie": config.cookie,
+            "cookie": _mask_cookie(config.cookie),
             "dlna_running": app_instance.dlna_running,
             "renderers_count": len(app_instance.renderers),
             # 实验性功能
@@ -126,7 +251,7 @@ def create_web_app(config: Config, app_instance) -> web.Application:
 
         if need_device_list:
             device_list = await app_instance.get_all_devices()
-            data["device_list"] = device_list
+            data["device_list"] = _mask_devices(device_list)
 
         return web.json_response(data)
 
@@ -140,7 +265,8 @@ def create_web_app(config: Config, app_instance) -> web.Application:
         if "password" in data:
             config.password = data["password"]
         if "cookie" in data:
-            config.cookie = data["cookie"]
+            # 若前端回写的是脱敏占位符（未修改 passToken等），还原为已存储的真实值
+            config.cookie = _unmask_cookie(data["cookie"], config.cookie)
 
         # 更新设备选择
         if "mi_did" in data:
@@ -203,7 +329,7 @@ def create_web_app(config: Config, app_instance) -> web.Application:
                     "devices": [],
                     "error": "登录失败，请检查账号密码或尝试使用 Cookie 登录"
                 })
-            return web.json_response({"devices": devices})
+            return web.json_response({"devices": _mask_devices(devices)})
         except Exception as e:
             return web.json_response(
                 {"error": f"获取设备列表失败: {e}"}, status=500
