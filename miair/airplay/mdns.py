@@ -39,8 +39,8 @@ class AirPlayMDNS:
     def _run_mdns(self):
         """在独立线程中运行 mDNS"""
         try:
-            # 获取本机 IP 地址
-            ip = self._get_ip()
+            # 获取本机 IP 地址 - 优先使用配置的 hostname，避免多网卡时选错
+            ip = self.hostname if self.hostname and self.hostname not in ("0.0.0.0", "127.0.0.1") else self._get_ip()
             ip_bytes = socket.inet_aton(ip)
 
             log.info(f"AirPlay mDNS 启动中，IP: {ip}:{self.rtsp_port}")
