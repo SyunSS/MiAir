@@ -136,6 +136,15 @@ class AudioStreamServer:
     # WAV 模式 — 直接输出 PCM，零编码延迟
     # ============================================================
 
+    def _reject_if_inactive(self) -> web.Response | None:
+        """流已停止（TEARDOWN 后）返回 404 拒绝拉取，避免音箱把空响应当成 EOF
+        反复重连该 URL 造成死循环（氛围灯闪烁、固件崩溃）。未停止返回 None。
+        """
+        if not self._active:
+            log.info("AirPlay: 流已停止，拒绝拉取 (404)")
+            return web.Response(status=404, headers={"Connection": "close"})
+        return None
+
     def _build_wav_header(self, data_size: int = 0x7FFFFF00) -> bytes:
         byte_rate = self._sample_rate * self._channels * self._sample_width
         block_align = self._channels * self._sample_width
@@ -154,6 +163,10 @@ class AudioStreamServer:
         使用专用写入线程从队列批量读取数据，通过 asyncio 事件写回 HTTP 响应，
         避免每个包都经过 asyncio.to_thread 的调度开销。
         """
+        rejected = self._reject_if_inactive()
+        if rejected is not None:
+            return rejected
+
         response = web.StreamResponse(
             status=200,
             headers={
@@ -263,6 +276,10 @@ class AudioStreamServer:
     # ============================================================
 
     async def _handle_stream_mp3(self, request: web.Request) -> web.StreamResponse:
+        rejected = self._reject_if_inactive()
+        if rejected is not None:
+            return rejected
+
         response = web.StreamResponse(
             status=200,
             headers={
